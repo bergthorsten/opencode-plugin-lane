@@ -1,5 +1,5 @@
-import { readFile, realpath } from "node:fs/promises"
-import { dirname, isAbsolute, join, relative, resolve, sep } from "node:path"
+import { lstat, readFile, realpath } from "node:fs/promises"
+import { basename, dirname, isAbsolute, join, relative, resolve, sep } from "node:path"
 import { Worktree } from "@opencode/plugin"
 import type { WorktreeDefinition } from "@opencode/plugin/promise/worktree"
 import { CommandError, run } from "./command"
@@ -34,6 +34,16 @@ async function canonical(path: string): Promise<string> {
     const parent = dirname(path)
     if (parent === path) throw error
     return join(await canonical(parent), relative(parent, path))
+  }
+}
+
+async function exists(path: string): Promise<boolean> {
+  try {
+    await lstat(path)
+    return true
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code === "ENOENT") return false
+    throw error
   }
 }
 
@@ -96,22 +106,27 @@ export function makeStrategy(value: Record<string, unknown> = {}): WorktreeDefin
       if (checkout !== root) {
         throw new Error(`Lane copies from the primary checkout only. Set from to ${root}.`)
       }
-      const directory = await canonical(resolve(input.directory))
-      const name = laneName(root, directory)
-      if (!name) {
-        throw new Error(`Lane requires destinations under ${join(root, ".lane", "trees")}. Set worktree.directory to that path.`)
+      const requested = basename(resolve(input.directory))
+      await run("git", ["check-ref-format", "--branch", requested], root, signal)
+      // OpenCode's destination is a suggestion. Lane owns the actual path and
+      // must check collisions here, including branches without a worktree.
+      let name = requested
+      let directory = join(root, ".lane", "trees", name)
+      let suffix = 1
+      while (await exists(directory) || await run("git", ["branch", "--list", "--format=%(refname:short)", "--", name], root, signal)) {
+        if (++suffix > 10) throw new Error(`No available Lane destination for ${requested} after 10 attempts`)
+        name = `${requested}-${suffix}`
+        directory = join(root, ".lane", "trees", name)
       }
-      await run("git", ["check-ref-format", "--branch", name], root, signal)
       const base = input.branch ?? await run("git", ["rev-parse", "--abbrev-ref", "HEAD"], root, signal)
       if (!base || base.startsWith("-")) throw new Error("Lane starting ref must be non-empty and must not start with '-'")
       await run("git", ["rev-parse", "--verify", "--end-of-options", `${base}^{commit}`], root, signal)
       const args = ["new", "--base", base]
       if (dirty) args.push("--dirty")
       args.push("--", name)
-      // Always supply --base: Lane then refuses to adopt an existing same-named
-      // branch, which would silently ignore OpenCode's requested starting ref.
+      // --base prevents adoption if a same-named branch appears after our checks.
       await run(executable, args, root, signal)
-      return { directory: input.directory }
+      return { directory: await realpath(directory) }
     },
     async list(sourceDirectory, { signal }) {
       const { root } = await layout(sourceDirectory, signal)

@@ -68,14 +68,18 @@ describe.skipIf(!executable)("Lane CLI integration", () => {
     expect(await git("branch", "--list", "feature")).toBe("")
   })
 
-  test("uses the requested starting ref and refuses existing branches", async () => {
+  test("uses the requested starting ref and avoids existing branches", async () => {
     const base = await git("rev-parse", "HEAD")
     await writeFile(join(root, "file.txt"), "newer\n")
     await git("commit", "-am", "second")
     await create("older", base)
     expect(await readFile(join(destination("older"), "file.txt"), "utf8")).toBe("original\n")
     await git("branch", "existing")
-    await expect(create("existing", base)).rejects.toThrow("already exists")
+    const existing = await git("rev-parse", "existing")
+    const result = await create("existing", base)
+    expect(result.directory).toBe(destination("existing-2"))
+    expect(await readFile(join(result.directory, "file.txt"), "utf8")).toBe("original\n")
+    expect(await git("rev-parse", "existing")).toBe(existing)
     await expect(create("bad-ref", "missing-ref")).rejects.toThrow()
   })
 
@@ -139,13 +143,18 @@ describe.skipIf(!executable)("Lane CLI integration", () => {
     expect(await readFile(join(destination("carried"), "untracked.txt"), "utf8")).toBe("scratch\n")
   })
 
-  test("rejects incompatible destinations, symlink escapes, and linked sources before creation", async () => {
-    await expect(strategy.create({ sourceDirectory: root, directory: join(temp, "outside") }, context())).rejects.toThrow("worktree.directory")
+  test("uses Lane's destination, handles collisions there, and rejects linked sources", async () => {
+    const input = { sourceDirectory: root, directory: join(temp, "outside") }
+    expect(await strategy.create(input, context())).toEqual({ directory: destination("outside") })
+    expect(await strategy.create(input, context())).toEqual({ directory: destination("outside-2") })
+    await writeFile(destination("outside-3"), "keep me")
+    expect(await strategy.create(input, context())).toEqual({ directory: destination("outside-4") })
+    expect(await readFile(destination("outside-3"), "utf8")).toBe("keep me")
     await create("source")
     await symlink(temp, destination("escape"))
-    await expect(create("escape/oops")).rejects.toThrow("worktree.directory")
+    expect(await create("escape")).toEqual({ directory: destination("escape-2") })
     await expect(strategy.create({ sourceDirectory: destination("source"), directory: destination("child") }, context())).rejects.toThrow("primary checkout only")
-    expect(await git("branch", "--list", "outside", "oops", "child")).toBe("")
+    expect(await git("branch", "--list", "child")).toBe("")
   })
 
   test("does not reinterpret cancellation as a force-required failure", async () => {
