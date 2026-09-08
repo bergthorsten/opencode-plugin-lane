@@ -7,22 +7,30 @@ Registers strategy `lane` through `ctx.worktree.transform`. OpenCode automatical
 ## Setup
 
 1. Install [Lane](https://lane.lukeed.com/#installation) and Git on the machine running the OpenCode server. Tested with Lane **0.1.0** and `@opencode/plugin` **0.0.0-beta-19296**.
-2. Install this plugin's dependencies with `bun install` in this directory.
-3. Add the following to **`opencode.jsonc` at your repository root**:
+2. Install the plugin directly from GitHub over HTTPS:
+
+```sh
+opencode2 plugin add git+https://github.com/anomalyco/opencode-plugin-lane.git
+```
+
+OpenCode downloads the plugin and its dependencies and adds it to your global `opencode.jsonc`. No local clone, manual `bun install`, or npm publication is needed.
+
+3. Set the worktree destination in **`opencode.jsonc` at your repository root**:
 
 ```jsonc
 {
   "$schema": "https://opencode.ai/config.json",
   "worktree": { "directory": ".lane/trees" },
-  "plugins": ["/root/projects/opencode-plugin-lane"],
 }
 ```
 
-Use the absolute path where you placed this plugin. If your config is in `.opencode/opencode.jsonc`, use `../.lane/trees`: OpenCode resolves the destination relative to the declaring config file. An absolute destination also works.
+Current OpenCode V2 resolves relative worktree destinations against the project's primary checkout, so this setting can also live in your global config. Older previews resolve relative to the declaring config file; placing the setting at the repository root works with both. An absolute destination also works.
 
 Lane creates `.lane/trees` and its Git exclusion on first creation. For Lane's memory workflow, run `lane init` yourself in the repository; that command also edits `AGENTS.md` and configures memory files.
 
 ## Options
+
+To configure the plugin manually or pass options, use the Git HTTPS URL as the package target:
 
 ```jsonc
 {
@@ -30,7 +38,7 @@ Lane creates `.lane/trees` and its Git exclusion on first creation. For Lane's m
   "worktree": { "directory": ".lane/trees" },
   "plugins": [
     {
-      "package": "/root/projects/opencode-plugin-lane",
+      "package": "git+https://github.com/anomalyco/opencode-plugin-lane.git",
       "options": {
         "executable": "/home/me/.local/bin/lane",
         "dirty": false,
@@ -44,6 +52,8 @@ Lane creates `.lane/trees` and its Git exclusion on first creation. For Lane's m
 | --- | --- | --- |
 | `executable` | `lane` | Command on the server's PATH, or an absolute binary path. |
 | `dirty` | `false` | Pass `--dirty` to carry primary-checkout edits and untracked files. |
+
+Git targets also accept a branch, tag, or full commit hash after `#`, such as `git+https://github.com/anomalyco/opencode-plugin-lane.git#main`.
 
 ## Behavior
 
