@@ -103,9 +103,6 @@ export function makeStrategy(value: Record<string, unknown> = {}): WorktreeDefin
     id: "lane",
     async create(input, { signal }) {
       const { root, checkout } = await layout(input.sourceDirectory, signal)
-      if (checkout !== root) {
-        throw new Error(`Lane copies from the primary checkout only. Set from to ${root}.`)
-      }
       const requested = basename(resolve(input.directory))
       await run("git", ["check-ref-format", "--branch", requested], root, signal)
       // OpenCode's destination is a suggestion. Lane owns the actual path and
@@ -118,9 +115,13 @@ export function makeStrategy(value: Record<string, unknown> = {}): WorktreeDefin
         name = `${requested}-${suffix}`
         directory = join(root, ".lane", "trees", name)
       }
-      const base = input.branch ?? await run("git", ["rev-parse", "--abbrev-ref", "HEAD"], root, signal)
-      if (!base || base.startsWith("-")) throw new Error("Lane starting ref must be non-empty and must not start with '-'")
-      await run("git", ["rev-parse", "--verify", "--end-of-options", `${base}^{commit}`], root, signal)
+      const ref = input.branch ?? "HEAD"
+      if (!ref || ref.startsWith("-")) throw new Error("Lane starting ref must be non-empty and must not start with '-'")
+      // Resolve HEAD-relative refs in the source checkout before invoking Lane
+      // from the primary checkout. Keep local branch names for Lane's merge base.
+      const commit = await run("git", ["rev-parse", "--verify", "--end-of-options", `${ref}^{commit}`], checkout, signal)
+      const symbolic = await run("git", ["rev-parse", "--symbolic-full-name", "--verify", "--end-of-options", ref], checkout, signal)
+      const base = symbolic.startsWith("refs/heads/") ? symbolic.slice("refs/heads/".length) : commit
       const args = ["new", "--base", base]
       if (dirty) args.push("--dirty")
       args.push("--", name)

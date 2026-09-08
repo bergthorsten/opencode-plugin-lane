@@ -143,7 +143,7 @@ describe.skipIf(!executable)("Lane CLI integration", () => {
     expect(await readFile(join(destination("carried"), "untracked.txt"), "utf8")).toBe("scratch\n")
   })
 
-  test("uses Lane's destination, handles collisions there, and rejects linked sources", async () => {
+  test("uses Lane's destination, handles collisions there, and resolves linked sources", async () => {
     const input = { sourceDirectory: root, directory: join(temp, "outside") }
     expect(await strategy.create(input, context())).toEqual({ directory: destination("outside") })
     expect(await strategy.create(input, context())).toEqual({ directory: destination("outside-2") })
@@ -151,10 +151,20 @@ describe.skipIf(!executable)("Lane CLI integration", () => {
     expect(await strategy.create(input, context())).toEqual({ directory: destination("outside-4") })
     expect(await readFile(destination("outside-3"), "utf8")).toBe("keep me")
     await create("source")
+    await writeFile(join(destination("source"), "file.txt"), "linked edit\n")
+    await run("git", ["commit", "-am", "linked commit"], destination("source"), context().signal)
     await symlink(temp, destination("escape"))
     expect(await create("escape")).toEqual({ directory: destination("escape-2") })
-    await expect(strategy.create({ sourceDirectory: destination("source"), directory: destination("child") }, context())).rejects.toThrow("primary checkout only")
-    expect(await git("branch", "--list", "child")).toBe("")
+    await mkdir(join(destination("source"), "src"))
+    const child = await strategy.create({ sourceDirectory: join(destination("source"), "src"), directory: join(temp, "child") }, context())
+    expect(child.directory).toBe(destination("child"))
+    expect(await readFile(join(child.directory, "file.txt"), "utf8")).toBe("linked edit\n")
+    expect(await git("config", "--get", "lane.child.base")).toBe("source")
+    await run("git", ["checkout", "--detach"], destination("source"), context().signal)
+    const detached = await strategy.create({ sourceDirectory: destination("source"), directory: join(temp, "detached") }, context())
+    expect(await readFile(join(detached.directory, "file.txt"), "utf8")).toBe("linked edit\n")
+    const previous = await strategy.create({ sourceDirectory: destination("source"), directory: join(temp, "previous"), branch: "HEAD~1" }, context())
+    expect(await readFile(join(previous.directory, "file.txt"), "utf8")).toBe("original\n")
   })
 
   test("does not reinterpret cancellation as a force-required failure", async () => {

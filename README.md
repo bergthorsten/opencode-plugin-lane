@@ -47,12 +47,12 @@ Git targets also accept a branch, tag, or full commit hash after `#`, such as `g
 
 ## Behavior
 
-- **Create:** takes the last component of OpenCode's suggested destination as the lane name and calls `lane new` under the primary checkout's `.lane/trees/`. Existing paths and branch names get a numeric suffix, with up to 10 candidates. An explicit OpenCode `branch` is passed as Lane's starting `--base` ref; otherwise the primary checkout's current HEAD is used. The actual created directory is returned to OpenCode.
+- **Create:** takes the last component of OpenCode's suggested destination as the lane name and calls `lane new` under the primary checkout's `.lane/trees/`. Existing paths and branch names get a numeric suffix, with up to 10 candidates. The starting ref is resolved from OpenCode's explicit `branch` or the source checkout's current HEAD, including detached HEAD. The actual created directory is returned to OpenCode.
 - **List:** filters `lane ls --json` to native `.lane/trees` worktrees with Lane's per-worktree identity stamp and matching branch name. Ordinary Git worktrees are not claimed. The primary checkout is reported as a root.
 - **Remove:** calls `lane rm` from the primary checkout. Lane's refusal to discard edits, pending notes, or unmerged commits becomes OpenCode's `forceRequired` error. Confirmed force passes `--force`. Lane removes the branch as well as the directory.
 - **Cancellation:** subprocesses receive the operation's abort signal. Errors are surfaced to OpenCode; it does not retry creation using Git.
 
-Lane 0.1.0 copies caches from the **primary checkout**, so the plugin rejects creation from linked checkouts. From a session in a linked checkout, supply `from: "/absolute/primary-checkout"` to the OpenCode worktree API. Listing and removal work from linked checkouts. Bare repositories and separate Git directories are unsupported by Lane's layout discovery.
+The plugin automatically resolves the **primary checkout** from Git's shared repository directory, so creation, listing, and removal work from linked checkouts and their subdirectories. Lane copies caches and, with `dirty: true`, uncommitted files from the primary checkout. Bare repositories and separate Git directories are unsupported by Lane's layout discovery.
 
 Reflink-capable APFS, btrfs, or XFS filesystems get warm ignored caches; Lane skips those caches when reflinks are unavailable. `dirty` follows Lane's own materialization behavior. Startup commands and inventory bookkeeping remain OpenCode's responsibility.
 
