@@ -1,0 +1,139 @@
+import { readFile, realpath } from "node:fs/promises"
+import { dirname, isAbsolute, join, relative, resolve, sep } from "node:path"
+import { Worktree } from "@opencode/plugin"
+import type { WorktreeDefinition } from "@opencode/plugin/promise/worktree"
+import { CommandError, run } from "./command"
+
+interface Options {
+  executable: string
+  dirty: boolean
+}
+
+function options(value: Record<string, unknown>): Options {
+  for (const key of Object.keys(value)) {
+    if (key !== "executable" && key !== "dirty") throw new Error(`Unknown Lane option: ${key}`)
+  }
+  const executable = value.executable ?? "lane"
+  const dirty = value.dirty ?? false
+  if (typeof executable !== "string" || !executable.trim() || executable.includes("\0")) {
+    throw new Error("Lane executable must be a non-empty command name or absolute path")
+  }
+  if (!isAbsolute(executable) && /[/\\]/.test(executable)) {
+    throw new Error("Use an absolute path for the Lane executable")
+  }
+  if (typeof dirty !== "boolean") throw new Error("Lane dirty must be a boolean")
+  return { executable, dirty }
+}
+
+// Resolve symlinked ancestors even before a destination has been created.
+async function canonical(path: string): Promise<string> {
+  try {
+    return await realpath(path)
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error
+    const parent = dirname(path)
+    if (parent === path) throw error
+    return join(await canonical(parent), relative(parent, path))
+  }
+}
+
+function laneName(root: string, directory: string): string | undefined {
+  const name = relative(join(root, ".lane", "trees"), directory)
+  if (!name || isAbsolute(name) || name.split(sep).some((part) => part.startsWith("."))) return
+  return name.split(sep).join("/")
+}
+
+async function layout(directory: string, signal: AbortSignal) {
+  const common = await run("git", ["rev-parse", "--path-format=absolute", "--git-common-dir"], directory, signal)
+  const root = dirname(await realpath(common))
+  // Lane itself assumes the common Git directory is <primary checkout>/.git.
+  if (await canonical(join(root, ".git")) !== await realpath(common)) {
+    throw new Error("Lane requires a primary checkout with a .git directory (bare and separate-git-dir repositories are unsupported)")
+  }
+  const checkout = await run("git", ["rev-parse", "--show-toplevel"], directory, signal)
+  return { root, checkout: await realpath(checkout) }
+}
+
+interface Lane {
+  path: string
+  branch: string
+}
+
+async function inventory(executable: string, root: string, signal: AbortSignal): Promise<Lane[]> {
+  const data: unknown = JSON.parse(await run(executable, ["ls", "--json"], root, signal))
+  if (!Array.isArray(data) || data.some((row) => !row || typeof row.path !== "string" || typeof row.branch !== "string")) {
+    throw new Error("Invalid lane ls --json response: expected an array of paths and branches")
+  }
+  const lanes: Lane[] = []
+  for (const row of data as Lane[]) {
+    signal.throwIfAborted()
+    let path: string
+    try {
+      path = await realpath(resolve(root, row.path))
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code === "ENOENT") continue
+      throw error
+    }
+    // lane ls includes ordinary Git worktrees too. Only claim native, stamped lanes
+    // whose branch matches the name lane rm would delete.
+    if (laneName(root, path) !== row.branch) continue
+    const gitdir = await run("git", ["rev-parse", "--absolute-git-dir"], path, signal)
+    try {
+      if ((await readFile(join(gitdir, "lane", "id"), "utf8")).trim()) lanes.push({ path, branch: row.branch })
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error
+    }
+  }
+  return lanes
+}
+
+export function makeStrategy(value: Record<string, unknown> = {}): WorktreeDefinition {
+  const { executable, dirty } = options(value)
+  return {
+    id: "lane",
+    async create(input, { signal }) {
+      const { root, checkout } = await layout(input.sourceDirectory, signal)
+      if (checkout !== root) {
+        throw new Error(`Lane copies from the primary checkout only. Set from to ${root}.`)
+      }
+      const directory = await canonical(resolve(input.directory))
+      const name = laneName(root, directory)
+      if (!name) {
+        throw new Error(`Lane requires destinations under ${join(root, ".lane", "trees")}. Set worktree.directory to that path.`)
+      }
+      await run("git", ["check-ref-format", "--branch", name], root, signal)
+      const base = input.branch ?? await run("git", ["rev-parse", "--abbrev-ref", "HEAD"], root, signal)
+      if (!base || base.startsWith("-")) throw new Error("Lane starting ref must be non-empty and must not start with '-'")
+      await run("git", ["rev-parse", "--verify", "--end-of-options", `${base}^{commit}`], root, signal)
+      const args = ["new", "--base", base]
+      if (dirty) args.push("--dirty")
+      args.push("--", name)
+      // Always supply --base: Lane then refuses to adopt an existing same-named
+      // branch, which would silently ignore OpenCode's requested starting ref.
+      await run(executable, args, root, signal)
+      return { directory: input.directory }
+    },
+    async list(sourceDirectory, { signal }) {
+      const { root } = await layout(sourceDirectory, signal)
+      const lanes = await inventory(executable, root, signal)
+      return [{ directory: root, type: "root" }, ...lanes.map((lane) => ({ directory: lane.path, type: "worktree" as const }))]
+    },
+    async remove(input, { signal }) {
+      const directory = await canonical(resolve(input.directory))
+      const { root } = await layout(directory, signal)
+      const lane = (await inventory(executable, root, signal)).find((lane) => lane.path === directory)
+      if (!lane) throw new Error(`Not a Lane-owned worktree: ${input.directory}`)
+      const args = ["rm"]
+      if (input.force) args.push("--force")
+      args.push("--", lane.branch)
+      try {
+        await run(executable, args, root, signal)
+      } catch (error) {
+        if (!input.force && error instanceof CommandError && error.code === 1 && error.stderr.includes(`kept lane ${lane.branch}:`)) {
+          throw new Worktree.OperationError({ message: error.stderr.trim(), forceRequired: true })
+        }
+        throw error
+      }
+    },
+  }
+}
