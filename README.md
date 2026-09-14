@@ -40,7 +40,7 @@ To configure the plugin manually or pass options, use the Git HTTPS URL as the p
 
 | Option | Default | Behavior |
 | --- | --- | --- |
-| `executable` | `lane` | Command on the server's PATH, or an absolute binary path. |
+| `executable` | auto-detected | Absolute binary path or command name. When omitted, the plugin checks the server's `PATH`, `LANE_INSTALL`, and conventional macOS/Linux locations (including `~/.local/bin/lane`, `~/.cargo/bin/lane`, mise, asdf, Volta, Homebrew, MacPorts, and Linuxbrew), verifying that candidate executables are actually Lukeed's Lane CLI. |
 | `dirty` | `false` | Pass `--dirty` to carry primary-checkout edits and untracked files. |
 
 Git targets also accept a branch, tag, or full commit hash after `#`, such as `git+https://github.com/bergthorsten/opencode-plugin-lane.git#main`.

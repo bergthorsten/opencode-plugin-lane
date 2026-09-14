@@ -1,4 +1,7 @@
+import { accessSync, constants } from "node:fs"
+import { execFileSync } from "node:child_process"
 import { lstat, readFile, realpath } from "node:fs/promises"
+import { homedir } from "node:os"
 import { basename, dirname, isAbsolute, join, relative, resolve, sep } from "node:path"
 import { Worktree } from "@opencode/plugin"
 import type { WorktreeDefinition } from "@opencode/plugin/promise/worktree"
@@ -9,19 +12,72 @@ interface Options {
   dirty: boolean
 }
 
+function laneLocations() {
+  const home = homedir()
+  const configuredDirectory = process.env.LANE_INSTALL?.replace(/^~(?=\/|$)/, home)
+  const userLocations = [
+    ...(configuredDirectory ? [join(configuredDirectory, "lane")] : []),
+    join(home, ".local", "bin", "lane"),
+    join(home, ".cargo", "bin", "lane"),
+    join(home, ".local", "share", "mise", "shims", "lane"),
+    join(home, ".asdf", "shims", "lane"),
+    join(home, ".volta", "bin", "lane"),
+  ]
+
+  if (process.platform === "darwin") {
+    return [...userLocations, "/opt/homebrew/bin/lane", "/usr/local/bin/lane", "/opt/local/bin/lane"]
+  }
+
+  if (process.platform === "linux") {
+    return [...userLocations, "/home/linuxbrew/.linuxbrew/bin/lane", "/usr/local/bin/lane", "/usr/bin/lane"]
+  }
+
+  return userLocations
+}
+
+function isLaneExecutable(path: string): boolean {
+  try {
+    accessSync(path, constants.X_OK)
+    const output = execFileSync(path, ["--version"], {
+      encoding: "utf8",
+      timeout: 1500,
+      stdio: ["ignore", "pipe", "ignore"],
+    })
+    return /^lane\s+\d+\.\d+/i.test(output.trim())
+  } catch {
+    return false
+  }
+}
+
+function which(name: string): string | null {
+  return Bun.which(name, { PATH: process.env.PATH ?? process.env.Path })
+}
+
+function resolveLaneExecutable(): string {
+  const onPath = which("lane")
+  if (onPath && isLaneExecutable(onPath)) return onPath
+
+  const candidate = laneLocations().find((path) => isLaneExecutable(path))
+  if (candidate) return candidate
+
+  return "lane"
+}
+
 function options(value: Record<string, unknown>): Options {
   for (const key of Object.keys(value)) {
     if (key !== "executable" && key !== "dirty") throw new Error(`Unknown Lane option: ${key}`)
   }
-  const executable = value.executable ?? "lane"
   const dirty = value.dirty ?? false
+  if (typeof dirty !== "boolean") throw new Error("Lane dirty must be a boolean")
+
+  const configuredExecutable = value.executable ?? "lane"
+  const executable = configuredExecutable === "lane" ? resolveLaneExecutable() : configuredExecutable
   if (typeof executable !== "string" || !executable.trim() || executable.includes("\0")) {
     throw new Error("Lane executable must be a non-empty command name or absolute path")
   }
   if (!isAbsolute(executable) && /[/\\]/.test(executable)) {
     throw new Error("Use an absolute path for the Lane executable")
   }
-  if (typeof dirty !== "boolean") throw new Error("Lane dirty must be a boolean")
   return { executable, dirty }
 }
 
@@ -97,11 +153,22 @@ async function inventory(executable: string, root: string, signal: AbortSignal):
   return lanes
 }
 
+function ensureExecutable(executable: string): void {
+  if (executable !== "lane") return
+  const onPath = which("lane")
+  if (onPath && !isLaneExecutable(onPath)) {
+    throw new Error(
+      `The "lane" executable on PATH (${onPath}) is not Lukeed's Lane worktree CLI. Install Lane from https://lane.lukeed.com or set the "executable" option in your OpenCode configuration.`
+    )
+  }
+}
+
 export function makeStrategy(value: Record<string, unknown> = {}): WorktreeDefinition {
   const { executable, dirty } = options(value)
   return {
     id: "lane",
     async create(input, { signal }) {
+      ensureExecutable(executable)
       const { root, checkout } = await layout(input.sourceDirectory, signal)
       const requested = basename(resolve(input.directory))
       await run("git", ["check-ref-format", "--branch", requested], root, signal)
@@ -130,11 +197,13 @@ export function makeStrategy(value: Record<string, unknown> = {}): WorktreeDefin
       return { directory: await realpath(directory) }
     },
     async list(sourceDirectory, { signal }) {
+      ensureExecutable(executable)
       const { root } = await layout(sourceDirectory, signal)
       const lanes = await inventory(executable, root, signal)
       return [{ directory: root, type: "root" }, ...lanes.map((lane) => ({ directory: lane.path, type: "worktree" as const }))]
     },
     async remove(input, { signal }) {
+      ensureExecutable(executable)
       const directory = await canonical(resolve(input.directory))
       const { root } = await layout(directory, signal)
       const lane = (await inventory(executable, root, signal)).find((lane) => lane.path === directory)
