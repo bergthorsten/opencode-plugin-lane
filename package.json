@@ -4,13 +4,17 @@
   "description": "Lane copy-on-write worktree strategy for OpenCode V2",
   "type": "module",
   "license": "MIT",
-  "exports": { ".": "./src/index.ts" },
+  "exports": {
+    ".": "./src/index.ts"
+  },
   "files": ["src", "README.md"],
   "scripts": {
     "typecheck": "tsc --noEmit",
     "test": "bun test"
   },
-  "dependencies": { "@opencode/plugin": "0.0.0-beta-19296" },
+  "dependencies": {
+    "@opencode/plugin": "^2.0.3"
+  },
   "devDependencies": {
     "@types/bun": "^1.3.0",
     "@types/node": "^24.0.0",

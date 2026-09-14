@@ -6,11 +6,11 @@ Registers strategy `lane` through `ctx.worktree.transform`. OpenCode automatical
 
 ## Setup
 
-1. Install [Lane](https://lane.lukeed.com/#installation) and Git on the machine running the OpenCode server. Tested with Lane **0.1.0** and `@opencode/plugin` **0.0.0-beta-19296**.
+1. Install [Lane](https://lane.lukeed.com/#installation) and Git on the machine running the OpenCode server. Tested with Lane **0.1.0**, OpenCode **2.0.3**, and `@opencode/plugin` **2.0.3**.
 2. Install the plugin directly from GitHub over HTTPS:
 
 ```sh
-opencode2 plugin add git+https://github.com/anomalyco/opencode-plugin-lane.git
+opencode plugin add git+https://github.com/bergthorsten/opencode-plugin-lane.git
 ```
 
 OpenCode downloads the plugin and its dependencies and adds it to your global `opencode.jsonc`. No local clone, manual `bun install`, or npm publication is needed.
@@ -28,7 +28,7 @@ To configure the plugin manually or pass options, use the Git HTTPS URL as the p
   "$schema": "https://opencode.ai/config.json",
   "plugins": [
     {
-      "package": "git+https://github.com/anomalyco/opencode-plugin-lane.git",
+      "package": "git+https://github.com/bergthorsten/opencode-plugin-lane.git",
       "options": {
         "executable": "/home/me/.local/bin/lane",
         "dirty": false,
@@ -43,7 +43,7 @@ To configure the plugin manually or pass options, use the Git HTTPS URL as the p
 | `executable` | `lane` | Command on the server's PATH, or an absolute binary path. |
 | `dirty` | `false` | Pass `--dirty` to carry primary-checkout edits and untracked files. |
 
-Git targets also accept a branch, tag, or full commit hash after `#`, such as `git+https://github.com/anomalyco/opencode-plugin-lane.git#main`.
+Git targets also accept a branch, tag, or full commit hash after `#`, such as `git+https://github.com/bergthorsten/opencode-plugin-lane.git#main`.
 
 ## Behavior
 

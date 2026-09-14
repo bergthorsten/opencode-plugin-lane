@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, test } from "bun:test"
-import { mkdtemp, mkdir, readFile, rm, symlink, writeFile } from "node:fs/promises"
+import { mkdtemp, mkdir, readFile, realpath, rm, symlink, writeFile } from "node:fs/promises"
 import { tmpdir } from "node:os"
 import { join } from "node:path"
 import { Worktree } from "@opencode/plugin"
@@ -37,7 +37,7 @@ describe.skipIf(!executable)("Lane CLI integration", () => {
   const create = (name: string, branch?: string) => strategy.create({ sourceDirectory: root, directory: destination(name), branch }, context())
 
   beforeEach(async () => {
-    temp = await mkdtemp(join(process.env.OPENCODE_TEST_TMP ?? tmpdir(), "opencode-plugin-lane-"))
+    temp = await realpath(await mkdtemp(join(process.env.OPENCODE_TEST_TMP ?? tmpdir(), "opencode-plugin-lane-")))
     root = join(temp, "repo with spaces")
     await mkdir(root)
     await git("init", "-qb", "main")
