@@ -9,13 +9,12 @@ import { CommandError, run } from "./command"
 
 interface Options {
   executable: string
-  dirty: boolean
 }
 
 interface Mode {
   id: string
-  dirty: boolean
   discover: boolean
+  create: boolean
 }
 
 function laneLocations() {
@@ -73,8 +72,9 @@ function options(value: Record<string, unknown>): Options {
   for (const key of Object.keys(value)) {
     if (key !== "executable" && key !== "dirty") throw new Error(`Unknown Lane option: ${key}`)
   }
-  const dirty = value.dirty ?? false
-  if (typeof dirty !== "boolean") throw new Error("Lane dirty must be a boolean")
+  if (value.dirty !== undefined && value.dirty !== false) {
+    throw new Error("Lane worktrees are always clean; remove the dirty option or set it to false")
+  }
 
   const configuredExecutable = value.executable ?? "lane"
   const executable = configuredExecutable === "lane" ? resolveLaneExecutable() : configuredExecutable
@@ -84,7 +84,7 @@ function options(value: Record<string, unknown>): Options {
   if (!isAbsolute(executable) && /[/\\]/.test(executable)) {
     throw new Error("Use an absolute path for the Lane executable")
   }
-  return { executable, dirty }
+  return { executable }
 }
 
 // Resolve symlinked ancestors even before a destination has been created.
@@ -171,15 +171,15 @@ function ensureExecutable(executable: string): void {
 
 export function makeStrategy(value: Record<string, unknown> = {}): WorktreeDefinition {
   const configured = options(value)
-  return buildStrategy(configured, { id: "lane", dirty: configured.dirty, discover: true })
+  return buildStrategy(configured, { id: "lane-clean", discover: true, create: true })
 }
 
 export function makeStrategies(value: Record<string, unknown> = {}): WorktreeDefinition[] {
   const configured = options(value)
   return [
-    buildStrategy(configured, { id: "lane-clean", dirty: false, discover: false }),
-    buildStrategy(configured, { id: "lane-dirty", dirty: true, discover: false }),
-    buildStrategy(configured, { id: "lane", dirty: configured.dirty, discover: true }),
+    buildStrategy(configured, { id: "lane", discover: false, create: true }),
+    buildStrategy(configured, { id: "lane-dirty", discover: false, create: false }),
+    buildStrategy(configured, { id: "lane-clean", discover: true, create: true }),
   ]
 }
 
@@ -187,6 +187,7 @@ function buildStrategy(configured: Options, mode: Mode): WorktreeDefinition {
   return {
     id: mode.id,
     async create(input, { signal }) {
+      if (!mode.create) throw new Error("Creating Lanes with uncommitted changes is no longer supported")
       ensureExecutable(configured.executable)
       const { root, checkout } = await layout(input.sourceDirectory, signal)
       const requested = basename(resolve(input.directory))
@@ -209,7 +210,6 @@ function buildStrategy(configured: Options, mode: Mode): WorktreeDefinition {
       const symbolic = await run("git", ["rev-parse", "--symbolic-full-name", "--verify", "--end-of-options", ref], checkout, signal)
       const base = symbolic.startsWith("refs/heads/") ? symbolic.slice("refs/heads/".length) : commit
       const args = ["new", "--base", base]
-      if (mode.dirty) args.push("--dirty")
       args.push("--", name)
       // --base prevents adoption if a same-named branch appears after our checks.
       await run(configured.executable, args, root, signal)

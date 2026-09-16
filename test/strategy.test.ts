@@ -10,17 +10,18 @@ const executable = process.env.LANE_BIN ?? Bun.which("lane")
 const context = () => ({ signal: new AbortController().signal })
 
 test("validates plugin options before registration", () => {
-  expect(() => makeStrategy({ dirty: "yes" })).toThrow("boolean")
+  expect(() => makeStrategy({ dirty: true })).toThrow("always clean")
+  expect(() => makeStrategy({ dirty: false })).not.toThrow()
   expect(() => makeStrategy({ executable: "./lane" })).toThrow("absolute path")
   expect(() => makeStrategy({ executable: "" })).toThrow("non-empty")
   expect(() => makeStrategy({ directory: "/tmp" })).toThrow("Unknown Lane option")
 })
 
-test("registers explicit clean and dirty modes before the compatible default", () => {
-  expect(makeStrategies({ executable: process.execPath, dirty: true }).map((strategy) => strategy.id)).toEqual([
-    "lane-clean",
-    "lane-dirty",
+test("registers legacy owners before the clean default", () => {
+  expect(makeStrategies({ executable: process.execPath }).map((strategy) => strategy.id)).toEqual([
     "lane",
+    "lane-dirty",
+    "lane-clean",
   ])
 })
 
@@ -36,7 +37,7 @@ test("rejects an unrelated executable named lane on PATH and finds real lane", a
     // If real lane is installed, makeStrategy resolves to the real binary instead of the fake one:
     if (executable) {
       const s = makeStrategy({ executable: "lane" })
-      expect(s.id).toBe("lane")
+      expect(s.id).toBe("lane-clean")
     }
   } finally {
     process.env.PATH = originalPath
@@ -159,19 +160,24 @@ describe.skipIf(!executable)("Lane CLI integration", () => {
     await strategy.remove({ ...result, force: true }, context())
   })
 
-  test("optionally carries dirty files and accepts primary-checkout subdirectories", async () => {
+  test("always creates clean Lanes and retains legacy strategy owners for removal", async () => {
     await writeFile(join(root, "file.txt"), "dirty edit\n")
     await writeFile(join(root, "untracked.txt"), "scratch\n")
     await mkdir(join(root, "src"))
-    const [clean, dirty, configured] = makeStrategies({ executable, dirty: true })
-    if (!clean || !dirty || !configured) throw new Error("Expected all Lane strategies")
+    const [legacy, dirty, clean] = makeStrategies({ executable })
+    if (!legacy || !dirty || !clean) throw new Error("Expected all Lane strategy owners")
     await clean.create({ sourceDirectory: root, directory: destination("clean") }, context())
     expect(await readFile(join(destination("clean"), "file.txt"), "utf8")).toBe("original\n")
-    await dirty.create({ sourceDirectory: join(root, "src"), directory: destination("carried") }, context())
-    expect(await readFile(join(destination("carried"), "file.txt"), "utf8")).toBe("dirty edit\n")
-    expect(await readFile(join(destination("carried"), "untracked.txt"), "utf8")).toBe("scratch\n")
-    await configured.create({ sourceDirectory: root, directory: destination("configured") }, context())
-    expect(await readFile(join(destination("configured"), "file.txt"), "utf8")).toBe("dirty edit\n")
+    await expect(
+      dirty.create({ sourceDirectory: join(root, "src"), directory: destination("carried") }, context()),
+    ).rejects.toThrow("no longer supported")
+    const result = await legacy.create({ sourceDirectory: root, directory: destination("legacy") }, context())
+    expect(await readFile(join(result.directory, "file.txt"), "utf8")).toBe("original\n")
+    await dirty.remove({ directory: result.directory, force: false }, context())
+    expect(await clean.list(root, context())).toEqual([
+      { directory: root, type: "root" },
+      { directory: destination("clean"), type: "worktree" },
+    ])
   })
 
   test("uses Lane's destination, handles collisions there, and resolves linked sources", async () => {
