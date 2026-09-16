@@ -3,26 +3,17 @@ import { mkdtemp, mkdir, readFile, realpath, rm, symlink, writeFile } from "node
 import { tmpdir } from "node:os"
 import { join } from "node:path"
 import { Worktree } from "@opencode/plugin"
-import { makeStrategies, makeStrategy } from "../src/strategy"
+import { makeStrategy } from "../src/strategy"
 import { run } from "../src/command"
 
 const executable = process.env.LANE_BIN ?? Bun.which("lane")
 const context = () => ({ signal: new AbortController().signal })
 
 test("validates plugin options before registration", () => {
-  expect(() => makeStrategy({ dirty: true })).toThrow("always clean")
-  expect(() => makeStrategy({ dirty: false })).not.toThrow()
+  expect(() => makeStrategy({ dirty: false })).toThrow("Unknown Lane option")
   expect(() => makeStrategy({ executable: "./lane" })).toThrow("absolute path")
   expect(() => makeStrategy({ executable: "" })).toThrow("non-empty")
   expect(() => makeStrategy({ directory: "/tmp" })).toThrow("Unknown Lane option")
-})
-
-test("registers legacy owners before the clean default", () => {
-  expect(makeStrategies({ executable: process.execPath }).map((strategy) => strategy.id)).toEqual([
-    "lane",
-    "lane-dirty",
-    "lane-clean",
-  ])
 })
 
 test("rejects an unrelated executable named lane on PATH and finds real lane", async () => {
@@ -37,7 +28,7 @@ test("rejects an unrelated executable named lane on PATH and finds real lane", a
     // If real lane is installed, makeStrategy resolves to the real binary instead of the fake one:
     if (executable) {
       const s = makeStrategy({ executable: "lane" })
-      expect(s.id).toBe("lane-clean")
+      expect(s.id).toBe("lane")
     }
   } finally {
     process.env.PATH = originalPath
@@ -160,24 +151,16 @@ describe.skipIf(!executable)("Lane CLI integration", () => {
     await strategy.remove({ ...result, force: true }, context())
   })
 
-  test("always creates clean Lanes and retains legacy strategy owners for removal", async () => {
+  test("creates from committed state when the source checkout has local changes", async () => {
     await writeFile(join(root, "file.txt"), "dirty edit\n")
     await writeFile(join(root, "untracked.txt"), "scratch\n")
     await mkdir(join(root, "src"))
-    const [legacy, dirty, clean] = makeStrategies({ executable })
-    if (!legacy || !dirty || !clean) throw new Error("Expected all Lane strategy owners")
-    await clean.create({ sourceDirectory: root, directory: destination("clean") }, context())
-    expect(await readFile(join(destination("clean"), "file.txt"), "utf8")).toBe("original\n")
-    await expect(
-      dirty.create({ sourceDirectory: join(root, "src"), directory: destination("carried") }, context()),
-    ).rejects.toThrow("no longer supported")
-    const result = await legacy.create({ sourceDirectory: root, directory: destination("legacy") }, context())
+    const result = await strategy.create(
+      { sourceDirectory: join(root, "src"), directory: destination("clean") },
+      context(),
+    )
     expect(await readFile(join(result.directory, "file.txt"), "utf8")).toBe("original\n")
-    await dirty.remove({ directory: result.directory, force: false }, context())
-    expect(await clean.list(root, context())).toEqual([
-      { directory: root, type: "root" },
-      { directory: destination("clean"), type: "worktree" },
-    ])
+    expect(await Bun.file(join(result.directory, "untracked.txt")).exists()).toBe(false)
   })
 
   test("uses Lane's destination, handles collisions there, and resolves linked sources", async () => {

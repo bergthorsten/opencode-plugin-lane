@@ -2,7 +2,7 @@
 
 [Lane](https://github.com/lukeed/lane) copy-on-write worktrees as an **OpenCode V2 worktree strategy**.
 
-Registers `lane-clean` as the selected worktree strategy through `ctx.worktree.transform`. Unloading the plugin restores the previous strategy. Legacy `lane` and `lane-dirty` owners remain registered so worktrees created by older plugin versions can still be removed.
+Registers the clean `lane` worktree strategy through `ctx.worktree.transform`. OpenCode automatically selects it; unloading the plugin restores the previous strategy.
 
 ## Setup
 
@@ -45,15 +45,7 @@ Git targets also accept a branch, tag, or full commit hash after `#`, such as `g
 
 ## Behavior
 
-### Strategies
-
-| Strategy owner | Behavior |
-| --- | --- |
-| `lane-clean` | Selected by default and always creates from committed state without `--dirty`. |
-| `lane` | Retained for creating and removing clean Lanes recorded by older plugin versions. |
-| `lane-dirty` | Retained only for removing dirty Lanes recorded by plugin 0.2.0; new creation is rejected. |
-
-The selected `lane-clean` owner performs discovery, so refresh runs one Lane inventory command. Passing the removed `dirty` option with `false` remains accepted for configuration migration; `true` is rejected instead of silently copying changes.
+The strategy always creates from committed state without `--dirty`. There is no option for copying tracked edits or ordinary untracked files into a new Lane.
 
 - **Create:** takes the last component of OpenCode's suggested destination as the lane name and calls `lane new` under the primary checkout's `.lane/trees/`. Existing paths and branch names get a numeric suffix, with up to 10 candidates. The starting ref is resolved from OpenCode's explicit `branch` or the source checkout's current HEAD, including detached HEAD. The actual created directory is returned to OpenCode.
 - **List:** filters `lane ls --json` to native `.lane/trees` worktrees with Lane's per-worktree identity stamp and matching branch name. Ordinary Git worktrees are not claimed. The primary checkout is reported as a root.
@@ -72,4 +64,4 @@ bun run typecheck
 LANE_BIN=/absolute/path/to/lane bun test
 ```
 
-Integration tests use disposable Git repositories and the real Lane CLI, covering lifecycle, ownership, source/ref handling, clean creation, legacy removal, force confirmation, path validation, and cancellation. Without `LANE_BIN` or `lane` on PATH, CLI integration tests are skipped.
+Integration tests use disposable Git repositories and the real Lane CLI, covering lifecycle, ownership, source/ref handling, clean creation, force confirmation, path validation, and cancellation. Without `LANE_BIN` or `lane` on PATH, CLI integration tests are skipped.

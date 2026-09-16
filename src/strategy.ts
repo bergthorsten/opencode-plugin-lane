@@ -11,12 +11,6 @@ interface Options {
   executable: string
 }
 
-interface Mode {
-  id: string
-  discover: boolean
-  create: boolean
-}
-
 function laneLocations() {
   const home = homedir()
   const configuredDirectory = process.env.LANE_INSTALL?.replace(/^~(?=\/|$)/, home)
@@ -70,10 +64,7 @@ function resolveLaneExecutable(): string {
 
 function options(value: Record<string, unknown>): Options {
   for (const key of Object.keys(value)) {
-    if (key !== "executable" && key !== "dirty") throw new Error(`Unknown Lane option: ${key}`)
-  }
-  if (value.dirty !== undefined && value.dirty !== false) {
-    throw new Error("Lane worktrees are always clean; remove the dirty option or set it to false")
+    if (key !== "executable") throw new Error(`Unknown Lane option: ${key}`)
   }
 
   const configuredExecutable = value.executable ?? "lane"
@@ -171,23 +162,9 @@ function ensureExecutable(executable: string): void {
 
 export function makeStrategy(value: Record<string, unknown> = {}): WorktreeDefinition {
   const configured = options(value)
-  return buildStrategy(configured, { id: "lane-clean", discover: true, create: true })
-}
-
-export function makeStrategies(value: Record<string, unknown> = {}): WorktreeDefinition[] {
-  const configured = options(value)
-  return [
-    buildStrategy(configured, { id: "lane", discover: false, create: true }),
-    buildStrategy(configured, { id: "lane-dirty", discover: false, create: false }),
-    buildStrategy(configured, { id: "lane-clean", discover: true, create: true }),
-  ]
-}
-
-function buildStrategy(configured: Options, mode: Mode): WorktreeDefinition {
   return {
-    id: mode.id,
+    id: "lane",
     async create(input, { signal }) {
-      if (!mode.create) throw new Error("Creating Lanes with uncommitted changes is no longer supported")
       ensureExecutable(configured.executable)
       const { root, checkout } = await layout(input.sourceDirectory, signal)
       const requested = basename(resolve(input.directory))
@@ -209,16 +186,11 @@ function buildStrategy(configured: Options, mode: Mode): WorktreeDefinition {
       const commit = await run("git", ["rev-parse", "--verify", "--end-of-options", `${ref}^{commit}`], checkout, signal)
       const symbolic = await run("git", ["rev-parse", "--symbolic-full-name", "--verify", "--end-of-options", ref], checkout, signal)
       const base = symbolic.startsWith("refs/heads/") ? symbolic.slice("refs/heads/".length) : commit
-      const args = ["new", "--base", base]
-      args.push("--", name)
       // --base prevents adoption if a same-named branch appears after our checks.
-      await run(configured.executable, args, root, signal)
+      await run(configured.executable, ["new", "--base", base, "--", name], root, signal)
       return { directory: await realpath(directory) }
     },
     async list(sourceDirectory, { signal }) {
-      // Explicit creation modes share discovery with the canonical `lane`
-      // strategy so refresh performs one Lane inventory command.
-      if (!mode.discover) return []
       ensureExecutable(configured.executable)
       const { root } = await layout(sourceDirectory, signal)
       const lanes = await inventory(configured.executable, root, signal)
