@@ -12,6 +12,12 @@ interface Options {
   dirty: boolean
 }
 
+interface Mode {
+  id: string
+  dirty: boolean
+  discover: boolean
+}
+
 function laneLocations() {
   const home = homedir()
   const configuredDirectory = process.env.LANE_INSTALL?.replace(/^~(?=\/|$)/, home)
@@ -164,11 +170,24 @@ function ensureExecutable(executable: string): void {
 }
 
 export function makeStrategy(value: Record<string, unknown> = {}): WorktreeDefinition {
-  const { executable, dirty } = options(value)
+  const configured = options(value)
+  return buildStrategy(configured, { id: "lane", dirty: configured.dirty, discover: true })
+}
+
+export function makeStrategies(value: Record<string, unknown> = {}): WorktreeDefinition[] {
+  const configured = options(value)
+  return [
+    buildStrategy(configured, { id: "lane-clean", dirty: false, discover: false }),
+    buildStrategy(configured, { id: "lane-dirty", dirty: true, discover: false }),
+    buildStrategy(configured, { id: "lane", dirty: configured.dirty, discover: true }),
+  ]
+}
+
+function buildStrategy(configured: Options, mode: Mode): WorktreeDefinition {
   return {
-    id: "lane",
+    id: mode.id,
     async create(input, { signal }) {
-      ensureExecutable(executable)
+      ensureExecutable(configured.executable)
       const { root, checkout } = await layout(input.sourceDirectory, signal)
       const requested = basename(resolve(input.directory))
       await run("git", ["check-ref-format", "--branch", requested], root, signal)
@@ -190,29 +209,32 @@ export function makeStrategy(value: Record<string, unknown> = {}): WorktreeDefin
       const symbolic = await run("git", ["rev-parse", "--symbolic-full-name", "--verify", "--end-of-options", ref], checkout, signal)
       const base = symbolic.startsWith("refs/heads/") ? symbolic.slice("refs/heads/".length) : commit
       const args = ["new", "--base", base]
-      if (dirty) args.push("--dirty")
+      if (mode.dirty) args.push("--dirty")
       args.push("--", name)
       // --base prevents adoption if a same-named branch appears after our checks.
-      await run(executable, args, root, signal)
+      await run(configured.executable, args, root, signal)
       return { directory: await realpath(directory) }
     },
     async list(sourceDirectory, { signal }) {
-      ensureExecutable(executable)
+      // Explicit creation modes share discovery with the canonical `lane`
+      // strategy so refresh performs one Lane inventory command.
+      if (!mode.discover) return []
+      ensureExecutable(configured.executable)
       const { root } = await layout(sourceDirectory, signal)
-      const lanes = await inventory(executable, root, signal)
+      const lanes = await inventory(configured.executable, root, signal)
       return [{ directory: root, type: "root" }, ...lanes.map((lane) => ({ directory: lane.path, type: "worktree" as const }))]
     },
     async remove(input, { signal }) {
-      ensureExecutable(executable)
+      ensureExecutable(configured.executable)
       const directory = await canonical(resolve(input.directory))
       const { root } = await layout(directory, signal)
-      const lane = (await inventory(executable, root, signal)).find((lane) => lane.path === directory)
+      const lane = (await inventory(configured.executable, root, signal)).find((lane) => lane.path === directory)
       if (!lane) throw new Error(`Not a Lane-owned worktree: ${input.directory}`)
       const args = ["rm"]
       if (input.force) args.push("--force")
       args.push("--", lane.branch)
       try {
-        await run(executable, args, root, signal)
+        await run(configured.executable, args, root, signal)
       } catch (error) {
         if (!input.force && error instanceof CommandError && error.code === 1 && error.stderr.includes(`kept lane ${lane.branch}:`)) {
           throw new Worktree.OperationError({ message: error.stderr.trim(), forceRequired: true })

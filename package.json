@@ -1,6 +1,6 @@
 {
   "name": "opencode-plugin-lane",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "description": "Lane copy-on-write worktree strategy for OpenCode V2",
   "type": "module",
   "license": "MIT",

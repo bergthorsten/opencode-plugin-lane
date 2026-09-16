@@ -2,11 +2,11 @@
 
 [Lane](https://github.com/lukeed/lane) copy-on-write worktrees as an **OpenCode V2 worktree strategy**.
 
-Registers strategy `lane` through `ctx.worktree.transform`. OpenCode automatically selects the last registered strategy; unloading the plugin restores the previous strategy.
+Registers the compatible default strategy `lane` and the explicit `lane-clean` and `lane-dirty` creation modes through `ctx.worktree.transform`. OpenCode automatically selects `lane`; unloading the plugin restores the previous strategy.
 
 ## Setup
 
-1. Install [Lane](https://lane.lukeed.com/#installation) and Git on the machine running the OpenCode server. Tested with Lane **0.1.0**, OpenCode **2.0.3**, and `@opencode/plugin` **2.0.3**.
+1. Install [Lane](https://lane.lukeed.com/#installation) and Git on the machine running the OpenCode server. Tested with Lane **0.2.0**, OpenCode **2.0.3**, and `@opencode/plugin` **2.0.3**.
 2. Install the plugin directly from GitHub over HTTPS:
 
 ```sh
@@ -41,11 +41,21 @@ To configure the plugin manually or pass options, use the Git HTTPS URL as the p
 | Option | Default | Behavior |
 | --- | --- | --- |
 | `executable` | auto-detected | Absolute binary path or command name. When omitted, the plugin checks the server's `PATH`, `LANE_INSTALL`, and conventional macOS/Linux locations (including `~/.local/bin/lane`, `~/.cargo/bin/lane`, mise, asdf, Volta, Homebrew, MacPorts, and Linuxbrew), verifying that candidate executables are actually Lukeed's Lane CLI. |
-| `dirty` | `false` | Pass `--dirty` to carry primary-checkout edits and untracked files. |
+| `dirty` | `false` | Controls whether the compatible `lane` strategy passes `--dirty`. The explicit strategies ignore this option. |
 
 Git targets also accept a branch, tag, or full commit hash after `#`, such as `git+https://github.com/bergthorsten/opencode-plugin-lane.git#main`.
 
 ## Behavior
+
+### Strategies
+
+| Strategy | Local changes |
+| --- | --- |
+| `lane` | Follows the configured `dirty` option and remains the default for compatibility. |
+| `lane-clean` | Always creates from committed state without `--dirty`. |
+| `lane-dirty` | Always passes `--dirty` to carry tracked edits and ordinary untracked files. |
+
+The explicit strategies are useful when a caller needs to choose per worktree rather than setting one plugin-wide default. They share Lane discovery with the canonical `lane` strategy, so refresh performs only one inventory command.
 
 - **Create:** takes the last component of OpenCode's suggested destination as the lane name and calls `lane new` under the primary checkout's `.lane/trees/`. Existing paths and branch names get a numeric suffix, with up to 10 candidates. The starting ref is resolved from OpenCode's explicit `branch` or the source checkout's current HEAD, including detached HEAD. The actual created directory is returned to OpenCode.
 - **List:** filters `lane ls --json` to native `.lane/trees` worktrees with Lane's per-worktree identity stamp and matching branch name. Ordinary Git worktrees are not claimed. The primary checkout is reported as a root.

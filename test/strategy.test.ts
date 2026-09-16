@@ -3,7 +3,7 @@ import { mkdtemp, mkdir, readFile, realpath, rm, symlink, writeFile } from "node
 import { tmpdir } from "node:os"
 import { join } from "node:path"
 import { Worktree } from "@opencode/plugin"
-import { makeStrategy } from "../src/strategy"
+import { makeStrategies, makeStrategy } from "../src/strategy"
 import { run } from "../src/command"
 
 const executable = process.env.LANE_BIN ?? Bun.which("lane")
@@ -14,6 +14,14 @@ test("validates plugin options before registration", () => {
   expect(() => makeStrategy({ executable: "./lane" })).toThrow("absolute path")
   expect(() => makeStrategy({ executable: "" })).toThrow("non-empty")
   expect(() => makeStrategy({ directory: "/tmp" })).toThrow("Unknown Lane option")
+})
+
+test("registers explicit clean and dirty modes before the compatible default", () => {
+  expect(makeStrategies({ executable: process.execPath, dirty: true }).map((strategy) => strategy.id)).toEqual([
+    "lane-clean",
+    "lane-dirty",
+    "lane",
+  ])
 })
 
 test("rejects an unrelated executable named lane on PATH and finds real lane", async () => {
@@ -155,12 +163,15 @@ describe.skipIf(!executable)("Lane CLI integration", () => {
     await writeFile(join(root, "file.txt"), "dirty edit\n")
     await writeFile(join(root, "untracked.txt"), "scratch\n")
     await mkdir(join(root, "src"))
-    await create("clean")
+    const [clean, dirty, configured] = makeStrategies({ executable, dirty: true })
+    if (!clean || !dirty || !configured) throw new Error("Expected all Lane strategies")
+    await clean.create({ sourceDirectory: root, directory: destination("clean") }, context())
     expect(await readFile(join(destination("clean"), "file.txt"), "utf8")).toBe("original\n")
-    const dirty = makeStrategy({ executable, dirty: true })
     await dirty.create({ sourceDirectory: join(root, "src"), directory: destination("carried") }, context())
     expect(await readFile(join(destination("carried"), "file.txt"), "utf8")).toBe("dirty edit\n")
     expect(await readFile(join(destination("carried"), "untracked.txt"), "utf8")).toBe("scratch\n")
+    await configured.create({ sourceDirectory: root, directory: destination("configured") }, context())
+    expect(await readFile(join(destination("configured"), "file.txt"), "utf8")).toBe("dirty edit\n")
   })
 
   test("uses Lane's destination, handles collisions there, and resolves linked sources", async () => {
